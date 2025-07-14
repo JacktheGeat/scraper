@@ -1,1 +1,0 @@
-{'name': 'misode.github.io', 'owner': 'misode', 'isFork': False, 'stargazers': 30, 'subscribers': 13, 'contributors': 30}
