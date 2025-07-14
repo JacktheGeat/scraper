@@ -1,0 +1,2 @@
+{'user': 'JacktheGeat', 'numfollowers': 0, 'numfollowing': 1, 'numstarred': 2, 'numwatches': 10, 'numrepos': 10}
+{'user': 'graves557', 'numfollowers': 1, 'numfollowing': 0, 'numstarred': 0, 'numwatches': 0, 'numrepos': 1}

@@ -1,6 +1,18 @@
 from pathlib import Path
 import time
 import requests
+from github import Github, Auth
+
+token = ""
+file = open("api_scraper/TOKEN.txt")
+token=file.read()
+auth = Auth.Token(token)
+g = Github(auth=auth)
+
+    # You can now interact with the GitHub API
+user = g.get_user()
+print(f"Logged in as: {user.login}")
+
 
 user_urls = {"https://api.github.com/users/JacktheGeat":0}
 repo_urls = {}
