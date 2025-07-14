@@ -3,9 +3,10 @@ import time
 import requests
 from github import Github, Auth
 
-token = ""
+
 file = open("api_scraper/TOKEN.txt")
 token=file.read()
+file.close()
 auth = Auth.Token(token)
 g = Github(auth=auth)
 
