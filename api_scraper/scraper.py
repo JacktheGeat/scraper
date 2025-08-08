@@ -155,8 +155,7 @@ def getRepos(link: str, owner:str=None):
     for repo in data:
         toReturn +=1
         if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
-        if repo["url"] not in repo_urls: inQueue.append(f"repo: {repo["url"]}")
-        repo_urls[repo["url"]] += 1
+        addQueue('repo', repo['url'])
 
     counter = 1
     while 'next' in response.links:
@@ -168,8 +167,7 @@ def getRepos(link: str, owner:str=None):
         for repo in data:
             toReturn += 1
             if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
-            if repo["url"] not in repo_urls: inQueue.append(f"repo: {repo["url"]}")
-            repo_urls[repo["url"]] += 1
+            addQueue('repo', repo['url'])
     return toReturn
 
 # when the API returns a list of issues
@@ -205,6 +203,15 @@ def getIssues(link, owner):
     }
     return toReturn
 
+def addQueue(type: str, link:str):
+    if type =='repo':
+        if link not in repo_urls: inQueue.append(f"repo: {link}")
+        repo_urls[link] += 1
+    elif type == 'user':
+        if link not in user_urls: inQueue.append(f"user: {link}")
+        user_urls[link] += 1
+    else: raise ValueError("'type' must be 'repo' or 'user'")
+
 def saveData():
     '''
     Helper function that saves the different lists in case of a crash.
@@ -224,6 +231,8 @@ def saveData():
     
 
 def run(iterations):
+    bigrams = Counter()
+
     open("api_scraper/users.txt", "w").close()
     open("api_scraper/repos.txt", "w").close()
 
