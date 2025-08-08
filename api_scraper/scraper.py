@@ -118,19 +118,19 @@ def getUsers(link: str, owner:str=None):
     toReturn = 0
     for user in data:
         toReturn +=1
-        if owner != None: bigrams.update([f"{owner} : {user["full_name"]}"])
+        if owner != None: bigrams.update([f"{owner} : {user["login"]}"])
         if user["url"] not in user_urls: inQueue.append(f"user: {user["url"]}")
         user_urls[user["url"]] += 1
 
     counter = 1
-    while 'next' in response.link:
+    while 'next' in response.links:
         counter += 1
         print(f"{link} page {counter}")
         response = requests.get(response.links['next']['url'], headers=headers)
         data = response.json()
         for user in data:
             toReturn +=1
-            if owner != None: bigrams.update([f"{owner} : {user["full_name"]}"])
+            if owner != None: bigrams.update([f"{owner} : {user["login"]}"])
             if user["url"] not in user_urls: inQueue.append(f"user: {user["url"]}")
             user_urls[user["url"]] += 1
     return toReturn
@@ -152,20 +152,20 @@ def getRepos(link: str, owner:str=None):
     response = requests.get(f'{link}?per_page=100', headers=headers)
     data = response.json()
     toReturn = 0
-    for repo in response:
+    for repo in data:
         toReturn +=1
         if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
         if repo["url"] not in repo_urls: inQueue.append(f"repo: {repo["url"]}")
         repo_urls[repo["url"]] += 1
 
     counter = 1
-    while 'next' in response.link:
+    while 'next' in response.links:
         counter += 1
         print(f"{link} page {counter}")
 
         response = requests.get(response.links['next']['url'], headers=headers)
         data = response.json()
-        for repo in response:
+        for repo in data:
             toReturn += 1
             if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
             if repo["url"] not in repo_urls: inQueue.append(f"repo: {repo["url"]}")
@@ -192,8 +192,8 @@ def getIssues(link, owner):
     numClosed = 0
     for issue in response:
         if issue["state"] == "closed": numClosed += 1
-        created = time_to_int(datetime.fromisoformat(issue["created_at"]).replace(tzinfo=None))
-        closed = time_to_int(datetime.fromisoformat(issue["closed_at"]) if issue["closed_at"] != None else CURRENTTIME)
+        created = datetime.timestamp(datetime.fromisoformat(issue["created_at"]).replace(tzinfo=None))
+        closed = datetime.timestamp(datetime.fromisoformat(issue["closed_at"]) if issue["closed_at"] != None else CURRENTTIME)
         avgCloseTime.append(closed - created)
     
     avgCloseTime = sum(avgCloseTime)/len(avgCloseTime) if len(avgCloseTime) != 0 else 0
