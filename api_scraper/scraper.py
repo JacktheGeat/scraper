@@ -1,5 +1,5 @@
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import Counter
 
 file = open("api_scraper/TOKEN.txt")
@@ -24,15 +24,34 @@ inQueue = ["user: https://api.github.com/users/JacktheGeat"]
 bigrams = Counter()
 
 def getUserData(link):
+    '''
+    Gets data about a user, adding any connections to the bigram counter and queue.
+
+    Args:
+        link (str): A Github API link for a user
+    
+    Returns:
+        userData (dict):
+            >>> "user" (str): Name of repository
+            "repos" (int): Number of repos
+            "followers" (int): Number of people following the user
+            "following" (int): Number of pwople the user is following
+            "gists" (int): Number of gists
+            "starred" (int): Number of repos the user has starred
+            "watching" (int): Number of repos the user is watching
+    '''
     response =  requests.get(link, headers=headers).json()
     name = response["login"]
+    getRepos(response["repos_url"], name)
+    getUsers(response["following_url"].split("{")[0], name)
     toReturn = {
                 "user": name,
-                "numrepos": getRepos(name, response["repos_url"]),
-                "numfollowers": getUsers(name, response["followers_url"]),
-                "numfollowing": getUsers(name, response["following_url"].split("{")[0]),
-                "numstarred": getRepos(name, response["starred_url"].split("{")[0]),
-                "numwatches": getRepos(name, response["subscriptions_url"]),
+                "repos": response["public_repos"],
+                "followers": response["followers"],
+                "following": response["following"],
+                "gists": response["public_gists"],
+                "starred": getRepos(response["starred_url"].split("{")[0], name),
+                "watching": getRepos(response["subscriptions_url"], name),
             }
     with open("api_scraper/users.txt", "a") as file: 
         file.write(str(toReturn))
@@ -42,17 +61,38 @@ def getUserData(link):
     
 
 def getRepoData(link):
+    '''
+    Gets data about a repository, adding any connections to the bigram counter and queue.
+
+    Args:
+        link (str): A Github API link for a repository
+    
+    Returns:
+        userData (dict):
+            >>> "name" (str): Name of repository
+            "owner" (str): Owner of the repository
+            "isFork" (bool): Is repository a fork
+            "stargazers" (int): Number of users who have starred the repository
+            "watchers" (int): Number of users who are watching the repository
+            "contributors" (int): Number of users who have contributed to the repository
+            "issues" (dict): Various data on repository issues
+    '''
     response =  requests.get(link, headers=headers).json()
     name = response["full_name"]
+    getUsers(response["subscribers_url"],name)
+    getUsers(response["stargazers_url"],name)
     toReturn = {
                 "name": name,
                 "owner": response["owner"]["login"],
                 "isFork": response["fork"],
-                "stargazers": getUsers(name, response["stargazers_url"]),
-                "subscribers": getUsers(name, response["subscribers_url"]),
-                "contributors": getUsers(name, response["contributors_url"]),
-                "issues":getIssues(name, response["issues_url"].split("{")[0])
+                "stargazers": response["stargazers_count"],
+                "watchers": response["watchers_count"],
+                "contributors": getUsers(response["contributors_url"],name),
+                "issues":getIssues(response["issues_url"].split("{")[0],name)
             }
+    if toReturn["isFork"]: 
+        toReturn["parent"] = {"name": response["parent"]["full_name"]}
+        # Add parent to queue
     with open("api_scraper/repos.txt", "a") as file: 
         file.write(str(toReturn))
         file.write(",\n")
@@ -61,75 +101,92 @@ def getRepoData(link):
     
 
 # when the API returns a list of users
-def getUsers(owner, link):
-    loop = True
-    toReturn = 0
-    i = 1
-    while loop:
-        numUsers = getUsersRecursion(owner, link, i)
-        if numUsers < 10000: loop = False
-        else:
-            toReturn += numUsers
-            i += 100
-    return toReturn
-
+def getUsers(link: str, owner:str=None):
+    '''
+    Adds a list of users to the queue.
+    If the owner is set, also adds "owner : <user>" to bigrams counter
+    Args:
+        link (str): A Github API link for a list of users
+        owner (str) : The "owner" of the list, or who the bigram is originating from.
     
-def getUsersRecursion(owner, link, i=1):
-    print(f"{link} page {i}")
-    response = requests.get(f'{link}?page={i}&per_page={PAGESIZE}', headers=headers).json()
-    for user in response:
-        bigrams.update([f"{owner} : {user["login"]}"])
-        if user["url"] not in user_urls:
-            inQueue.append(f"user: {user["url"]}")
+    Returns:
+        numUsers (int): The number of users in the list.
+    '''
+    print(f"{link}")
+    response = requests.get(f'{link}?per_page=100', headers=headers)
+    data = response.json()
+    toReturn = 0
+    for user in data:
+        toReturn +=1
+        if owner != None: bigrams.update([f"{owner} : {user["full_name"]}"])
+        if user["url"] not in user_urls: inQueue.append(f"user: {user["url"]}")
         user_urls[user["url"]] += 1
-    toReturn = len(response)
-    if toReturn >= PAGESIZE: 
-        if i % 100 == 0:
-            return toReturn
-        return toReturn + getUsersRecursion(owner, link, i+1)
+
+    counter = 1
+    while 'next' in response.link:
+        counter += 1
+        print(f"{link} page {counter}")
+        response = requests.get(response.links['next']['url'], headers=headers)
+        data = response.json()
+        for user in data:
+            toReturn +=1
+            if owner != None: bigrams.update([f"{owner} : {user["full_name"]}"])
+            if user["url"] not in user_urls: inQueue.append(f"user: {user["url"]}")
+            user_urls[user["url"]] += 1
     return toReturn
 
 
 # when the API returns a list of repos
-def getRepos(owner, link):
-    loop = True
+def getRepos(link: str, owner:str=None):
+    '''
+    Adds a list of repositories to the queue.
+    If owner is set, also adds "owner : <repo>" to bigrams counter
+    Args:
+        link (str): A Github API link for a list of repositories
+        owner (str) : The "owner" of the list, or who the bigram is originating from.
+    
+    Returns:
+        numRepos (int): The number of repositories in the list.
+    '''
+    print(f"{link}")
+    response = requests.get(f'{link}?per_page=100', headers=headers)
+    data = response.json()
     toReturn = 0
-    i = 1
-    while loop:
-        numUsers = getReposRecursion(owner, link, i)
-        if numUsers < 10000: loop = False
-        else:
-            toReturn += numUsers
-            i += 100
-    return toReturn
-
-def getReposRecursion(owner, link, i = 1):
-    print(f"{link} page {i}")
-    response = requests.get(f'{link}?page={i}&per_page={PAGESIZE}', headers=headers).json()
     for repo in response:
-        bigrams.update([f"{owner} : {repo["full_name"]}"])
-        if repo["url"] not in repo_urls:
-            inQueue.append(f"repo: {repo["url"]}")
+        toReturn +=1
+        if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
+        if repo["url"] not in repo_urls: inQueue.append(f"repo: {repo["url"]}")
         repo_urls[repo["url"]] += 1
-    toReturn = len(response)
-    if toReturn >= PAGESIZE & i % 100 != 0:
-        return toReturn + getReposRecursion(owner, link, i+1)
-    return toReturn
 
-# Helper that converts datetime object into an integer
-def time_to_int(dateobj: datetime):
-    return datetime.timestamp(dateobj)
-# Helper that converts integers into datetime objects
-def int_to_time(dateint:int):
-    if dateint == 0:
-        return datetime(1, 1, 1, 0, 0, 0)
-    UNIX_EPOCH = 719164
-    dateobj = datetime.fromtimestamp(int(dateint))
-    dateobj = dateobj - timedelta(days=UNIX_EPOCH)
-    return dateobj
+    counter = 1
+    while 'next' in response.link:
+        counter += 1
+        print(f"{link} page {counter}")
+
+        response = requests.get(response.links['next']['url'], headers=headers)
+        data = response.json()
+        for repo in response:
+            toReturn += 1
+            if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
+            if repo["url"] not in repo_urls: inQueue.append(f"repo: {repo["url"]}")
+            repo_urls[repo["url"]] += 1
+    return toReturn
 
 # when the API returns a list of issues
-def getIssues(owner, link):
+def getIssues(link, owner):
+    '''
+    Gets data about a repository, adding any connections to the bigram counter and queue.
+
+    Args:
+        link (str): A Github API link for a liar of issues
+    
+    Returns:
+        issueData (dict):
+            >>> "numIssues" (int): total number of issues
+            "active" (int): number of active issues
+            "closed" (int): number of closed issues,
+            "avg_close_time" (int): a timestamp representing the average time it takes to close an issue.
+    '''
     response =  requests.get(link, headers=headers).json()
     avgCloseTime = []
     numClosed = 0
@@ -149,6 +206,13 @@ def getIssues(owner, link):
     return toReturn
 
 def saveData():
+    '''
+    Helper function that saves the different lists in case of a crash.
+        * queue
+        * bigrams
+        * seenUsers
+        * seenRepos
+    '''
     with open("api_scraper/queue.txt", "w") as file: 
         file.write(str(inQueue))
     with open("api_scraper/bigrams.txt", "w") as file: 
@@ -175,4 +239,4 @@ def run(iterations):
     print(f"num repos seen: \t\t{len(repo_urls.items())}")
     print(f"total remaining  in queue: \t{len(inQueue)}")
 
-run(200)
+run(50)
