@@ -1,4 +1,4 @@
-import requests
+import requests, csv, pickle
 from datetime import datetime
 from collections import Counter
 
@@ -12,16 +12,43 @@ login = requests.get('https://api.github.com/user', headers=headers)
 CURRENTTIME = datetime.now()
 PAGESIZE = 100
 
-with open("api_scraper/repos.txt", "a") as reposFile: 
-    reposFile.write("[")
-with open("api_scraper/users.txt", "a") as usersFile: 
-    usersFile.write("[")
+# sets the headers
+with open("api_scraper/users.csv", "w", newline='') as file: 
+    writer = csv.writer(file, delimiter='|')
+    fields = ["name", 
+              "numrepos", 
+              "numfollowers",
+              "numfollowing",
+              "numgists",
+              "numstarred",
+              "numwatching",
+             ]
+    writer.writerow(fields)
+with open("api_scraper/repos.csv", "w", newline='') as file: 
+    writer = csv.writer(file, delimiter="|")
+    fields = ["name", 
+              "owner", 
+              "numstargazers", 
+              "numwatchers", 
+              "numcontributors",
+              "numissues", 
+              "openissues",
+              "closedissues",
+              "avgclosetime",
+              "isFork", 
+              "forkedFrom"
+             ]
+    writer.writerow(fields)
 
 
 user_urls = Counter({"https://api.github.com/users/JacktheGeat":0})
 repo_urls = Counter()
-inQueue = ["user: https://api.github.com/users/JacktheGeat"]
+inQueue = [["user","https://api.github.com/users/JacktheGeat"]]
 bigrams = Counter()
+queueFiles = 0
+reposFiles = 0
+usersFiles = 0
+currentQueue = 0
 
 def getUserData(link):
     '''
@@ -44,18 +71,17 @@ def getUserData(link):
     name = response["login"]
     getRepos(response["repos_url"], name)
     getUsers(response["following_url"].split("{")[0], name)
-    toReturn = {
-                "user": name,
-                "repos": response["public_repos"],
-                "followers": response["followers"],
-                "following": response["following"],
-                "gists": response["public_gists"],
-                "starred": getRepos(response["starred_url"].split("{")[0], name),
-                "watching": getRepos(response["subscriptions_url"], name),
-            }
-    with open("api_scraper/users.txt", "a") as file: 
-        file.write(str(toReturn))
-        file.write(",\n")
+    toReturn = [name, 
+                response["public_repos"],
+                response["followers"],
+                response["following"],
+                response["public_gists"],
+                getRepos(response["starred_url"].split("{")[0], name),
+                getRepos(response["subscriptions_url"], name)
+    ]
+    with open("api_scraper/users.csv", "a", newline='') as file: 
+        writer = csv.writer(file, delimiter='|')
+        writer.writerow(toReturn)
     saveData()
     return toReturn
     
@@ -81,21 +107,25 @@ def getRepoData(link):
     name = response["full_name"]
     getUsers(response["subscribers_url"],name)
     getUsers(response["stargazers_url"],name)
-    toReturn = {
-                "name": name,
-                "owner": response["owner"]["login"],
-                "isFork": response["fork"],
-                "stargazers": response["stargazers_count"],
-                "watchers": response["watchers_count"],
-                "contributors": getUsers(response["contributors_url"],name),
-                "issues":getIssues(response["issues_url"].split("{")[0],name)
-            }
-    if toReturn["isFork"]: 
-        toReturn["parent"] = {"name": response["parent"]["full_name"]}
+    issuesData = getIssues(response["issues_url"].split("{")[0],name)
+    toReturn = [name,
+                response["owner"]["login"],
+                response["stargazers_count"],
+                response["watchers_count"],
+                getUsers(response["contributors_url"],name),
+                issuesData['numIssues'],
+                issuesData['active'],
+                issuesData['closed'],
+                issuesData['avg_close_time'],
+                response["fork"]
+            ]
+    if toReturn[9]: 
+        toReturn.append(response["parent"]["full_name"])
         # Add parent to queue
-    with open("api_scraper/repos.txt", "a") as file: 
-        file.write(str(toReturn))
-        file.write(",\n")
+    else: toReturn.append('')
+    with open("api_scraper/repos.csv", "a", newline='') as file: 
+        writer = csv.writer(file, delimiter='|')
+        writer.writerow(toReturn)
     saveData()
     return toReturn
     
@@ -114,12 +144,13 @@ def getUsers(link: str, owner:str=None):
     '''
     print(f"{link}")
     response = requests.get(f'{link}?per_page=100', headers=headers)
+    if response.status_code == 204: return 0
     data = response.json()
     toReturn = 0
     for user in data:
         toReturn +=1
         if owner != None: bigrams.update([f"{owner} : {user["login"]}"])
-        if user["url"] not in user_urls: inQueue.append(f"user: {user["url"]}")
+        addQueue('user', user["url"])
         user_urls[user["url"]] += 1
 
     counter = 1
@@ -127,11 +158,12 @@ def getUsers(link: str, owner:str=None):
         counter += 1
         print(f"{link} page {counter}")
         response = requests.get(response.links['next']['url'], headers=headers)
+        if response.status_code == 204: return 0
         data = response.json()
         for user in data:
             toReturn +=1
             if owner != None: bigrams.update([f"{owner} : {user["login"]}"])
-            if user["url"] not in user_urls: inQueue.append(f"user: {user["url"]}")
+            addQueue('user', user["url"])
             user_urls[user["url"]] += 1
     return toReturn
 
@@ -150,6 +182,8 @@ def getRepos(link: str, owner:str=None):
     '''
     print(f"{link}")
     response = requests.get(f'{link}?per_page=100', headers=headers)
+    if response.status_code == 204: return 0
+
     data = response.json()
     toReturn = 0
     for repo in data:
@@ -163,6 +197,8 @@ def getRepos(link: str, owner:str=None):
         print(f"{link} page {counter}")
 
         response = requests.get(response.links['next']['url'], headers=headers)
+        if response.status_code == 204: return 0
+
         data = response.json()
         for repo in data:
             toReturn += 1
@@ -204,13 +240,80 @@ def getIssues(link, owner):
     return toReturn
 
 def addQueue(type: str, link:str):
+    global queueFiles
+    global reposFiles
+    global usersFiles
     if type =='repo':
-        if link not in repo_urls: inQueue.append(f"repo: {link}")
-        repo_urls[link] += 1
+        notFound=True
+        if link in repo_urls: 
+            notFound = False
+            repo_urls[link] += 1
+        counter = 0
+        while notFound and counter < reposFiles:
+            pickleIn = open(f"api_scraper/seenRepos/{counter}.pickle", "rb")
+            reposPickle = pickle.load(pickleIn)
+            pickleIn.close()
+            if link in reposPickle: 
+                notFound = False
+                reposPickle[link]+=1
+                pickleOut = open(f"api_scraper/seenRepos/{counter}.pickle", "wb")
+                pickle.dump(reposPickle, pickleOut)
+                pickleOut.close()
+            counter+=1
+        
+        if notFound: 
+            inQueue.append(["repo", link])
+        
+        if len(repo_urls) > 1000:
+            pickleOut = open(f"api_scraper/seenRepos/{counter}.pickle", "wb")
+            pickle.dump(reposPickle, pickleOut)
+            pickleOut.close()
+            with open(f"api_scraper/seenRepos/{reposFiles}.csv", "w", newline='') as file: 
+                writer = csv.writer(file, delimiter='|')
+                writer.writerows(repo_urls.items())
+            repo_urls.clear()
+            reposFiles += 1
+
     elif type == 'user':
-        if link not in user_urls: inQueue.append(f"user: {link}")
-        user_urls[link] += 1
+        notFound=True
+        if link in user_urls: 
+            notFound = False
+            user_urls[link] += 1
+        counter = 0
+        while notFound and counter < usersFiles:
+            pickleIn = open(f"api_scraper/seenUsers/{counter}.pickle", "rb")
+            usersPickle = pickle.load(pickleIn)
+            pickleIn.close()
+            if link in usersPickle: 
+                notFound = False
+                usersPickle[link]+=1
+                pickleOut = open(f"api_scraper/seenUsers/{counter}.pickle", "wb")
+                pickle.dump(usersPickle, pickleOut)
+                pickleOut.close()
+            counter+=1
+        
+        if notFound: 
+            inQueue.append(["user", link])
+        
+        if len(user_urls) > 1000:
+            pickleOut = open(f"api_scraper/seenUsers/{usersFiles}.pickle", "wb")
+            pickle.dump(user_urls, pickleOut)
+            pickleOut.close()
+            with open(f"api_scraper/seenUsers/{usersFiles}.csv", "w", newline='') as file: 
+                writer = csv.writer(file, delimiter='|')
+                writer.writerows(user_urls.items())
+            user_urls.clear()
+            usersFiles += 1
+
     else: raise ValueError("'type' must be 'repo' or 'user'")
+
+
+    if len(inQueue) > 1000:
+        with open(f"api_scraper/queue/{queueFiles}.csv", "w", newline='') as file: 
+            writer = csv.writer(file, delimiter='|')
+            writer.writerows(inQueue)
+        queueFiles += 1
+        inQueue.clear()
 
 def saveData():
     '''
@@ -220,32 +323,59 @@ def saveData():
         * seenUsers
         * seenRepos
     '''
-    with open("api_scraper/queue.txt", "w") as file: 
-        file.write(str(inQueue))
-    with open("api_scraper/bigrams.txt", "w") as file: 
-        file.write(str(bigrams))
-    with open("api_scraper/seenUsers.txt", "w") as file: 
-        file.write(str(user_urls))
-    with open("api_scraper/seenRepos.txt", "w") as file: 
-        file.write(str(repo_urls))
+    pickleQueue = open(f"api_scraper/queue.pickle", "wb")
+    pickle.dump(inQueue, pickleQueue)
+    pickleQueue.close()
+    
+    pickleBigrams = open(f"api_scraper/bigrams.pickle", "wb")
+    pickle.dump(bigrams, pickleBigrams)
+    pickleBigrams.close()
+    
+    pickleUsers = open(f"api_scraper/seenUsers/{usersFiles}.pickle", "wb")
+    pickle.dump(user_urls, pickleUsers)
+    pickleUsers.close()
+    with open(f"api_scraper/seenUsers/{usersFiles}.csv", "w",newline='') as file: 
+        writer = csv.writer(file, delimiter='|')
+        writer.writerows(user_urls.items())
+
+    pickleRepos = open(f"api_scraper/seenRepos/{reposFiles}.pickle", "wb")
+    pickle.dump(repo_urls, pickleRepos)
+    pickleRepos.close()
+    with open(f"api_scraper/seenRepos/{reposFiles}.csv", "w",newline='') as file: 
+        writer = csv.writer(file, delimiter='|')
+        writer.writerows(repo_urls.items())
     
 
 def run(iterations):
-    bigrams = Counter()
-
-    open("api_scraper/users.txt", "w").close()
-    open("api_scraper/repos.txt", "w").close()
-
-    while inQueue and iterations > 0:
-        if inQueue[0][:6] == "user: ":
-            getUserData(inQueue[0][6:])
-        else:
-            getRepoData(inQueue[0][6:])
-        inQueue.pop(0)
+    global currentQueue
+    while iterations > 0:
+        if not inQueue and queueFiles > 0:
+            with open(f"api_scraper/queue/{currentQueue}.csv", newline='') as csvfile:
+                reader = csv.reader(csvfile, delimiter='|')
+                for row in reader:
+                    inQueue.append(row)
+            print(f"inQueue = {inQueue}")
+            currentQueue += 1
+        data = inQueue.pop()
+        if data[0] == "user":
+            getUserData(data[1])
+        elif data[0] == "repo":
+            getRepoData(data[1])
+        else: 
+            print(data)
+            raise ValueError("'type' must be 'repo' or 'user'")
         iterations -= 1
 
     print(f"num users seen: \t\t{len(user_urls.items())}")
     print(f"num repos seen: \t\t{len(repo_urls.items())}")
     print(f"total remaining  in queue: \t{len(inQueue)}")
+    with open(f"api_scraper/queue/{queueFiles}.csv", "w", newline='') as file: 
+        writer = csv.writer(file, delimiter='|')
+        writer.writerows(inQueue)
 
-run(50)
+run(100)
+
+with open("api_scraper/repos.csv", newline='') as csvfile:
+    reader = csv.reader(csvfile, delimiter='|')
+    for row in reader:
+        print(" | ".join(row))
