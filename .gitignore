@@ -1,3 +1,15 @@
 api_scraper/TOKEN.txt
 api_scraper/test.py
 saved runs/
+
+api_scraper/queue/*
+!api_scraper/queue/0.csv
+
+
+api_scraper/seenRepos/*
+!api_scraper/seenRepos/0.csv
+!api_scraper/seenRepos/0.pickle
+
+api_scraper/seenUsers/*
+!api_scraper/seenUsers/0.csv
+!api_scraper/seenUsers/0.pickle

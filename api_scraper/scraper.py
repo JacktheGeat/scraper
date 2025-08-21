@@ -1,4 +1,4 @@
-import requests, csv, pickle
+import requests, csv, pickle, os
 from datetime import datetime
 from collections import Counter
 
@@ -13,7 +13,7 @@ CURRENTTIME = datetime.now()
 PAGESIZE = 100
 
 # sets the headers
-with open("api_scraper/users.csv", "w", newline='') as file: 
+with open("api_scraper/users.csv", "a", newline='') as file: 
     writer = csv.writer(file, delimiter='|')
     fields = ["name", 
               "numrepos", 
@@ -24,7 +24,7 @@ with open("api_scraper/users.csv", "w", newline='') as file:
               "numwatching",
              ]
     writer.writerow(fields)
-with open("api_scraper/repos.csv", "w", newline='') as file: 
+with open("api_scraper/repos.csv", "a", newline='') as file: 
     writer = csv.writer(file, delimiter="|")
     fields = ["name", 
               "owner", 
@@ -40,15 +40,20 @@ with open("api_scraper/repos.csv", "w", newline='') as file:
              ]
     writer.writerow(fields)
 
+savedData = [[["user","https://api.github.com/users/JacktheGeat"]],Counter(), Counter(), Counter(), 0, 0, 0, 0]
 
-user_urls = Counter({"https://api.github.com/users/JacktheGeat":0})
-repo_urls = Counter()
-inQueue = [["user","https://api.github.com/users/JacktheGeat"]]
-bigrams = Counter()
-queueFiles = 0
-reposFiles = 0
-usersFiles = 0
-currentQueue = 0
+# pickleIn = open(f"api_scraper/savedRun.pickle", "rb")
+# savedData = pickle.load(pickleIn) # [inQueue,bigrams,repo_urls, user_urls, usersFiles,reposFiles, queueFiles, currentQueue]
+# pickleIn.close()
+inQueue = savedData[0]
+bigrams = savedData[1]
+repo_urls = savedData[2]
+user_urls = savedData[3]
+usersFiles = savedData[4]
+reposFiles = savedData[5]
+queueFiles = savedData[6]
+currentQueue = savedData[7]
+for i in savedData: print(i)
 
 def getUserData(link):
     '''
@@ -144,7 +149,7 @@ def getUsers(link: str, owner:str=None):
     '''
     print(f"{link}")
     response = requests.get(f'{link}?per_page=100', headers=headers)
-    if response.status_code == 204: return 0
+    if response.status_code == 204 or response.status_code == 500: return 0
     data = response.json()
     toReturn = 0
     for user in data:
@@ -158,7 +163,7 @@ def getUsers(link: str, owner:str=None):
         counter += 1
         print(f"{link} page {counter}")
         response = requests.get(response.links['next']['url'], headers=headers)
-        if response.status_code == 204: return 0
+        if response.status_code == 204 or response.status_code == 500: return 0
         data = response.json()
         for user in data:
             toReturn +=1
@@ -182,7 +187,7 @@ def getRepos(link: str, owner:str=None):
     '''
     print(f"{link}")
     response = requests.get(f'{link}?per_page=100', headers=headers)
-    if response.status_code == 204: return 0
+    if response.status_code == 204 or response.status_code == 500: return 0
 
     data = response.json()
     toReturn = 0
@@ -190,6 +195,7 @@ def getRepos(link: str, owner:str=None):
         toReturn +=1
         if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
         addQueue('repo', repo['url'])
+        repo_urls[repo["url"]] += 1
 
     counter = 1
     while 'next' in response.links:
@@ -197,13 +203,14 @@ def getRepos(link: str, owner:str=None):
         print(f"{link} page {counter}")
 
         response = requests.get(response.links['next']['url'], headers=headers)
-        if response.status_code == 204: return 0
+        if response.status_code == 204 or response.status_code == 500: return 0
 
         data = response.json()
         for repo in data:
             toReturn += 1
             if owner != None: bigrams.update([f"{owner} : {repo["full_name"]}"])
             addQueue('repo', repo['url'])
+            repo_urls[repo["url"]] += 1
     return toReturn
 
 # when the API returns a list of issues
@@ -248,25 +255,26 @@ def addQueue(type: str, link:str):
         if link in repo_urls: 
             notFound = False
             repo_urls[link] += 1
-        counter = 0
-        while notFound and counter < reposFiles:
-            pickleIn = open(f"api_scraper/seenRepos/{counter}.pickle", "rb")
-            reposPickle = pickle.load(pickleIn)
-            pickleIn.close()
-            if link in reposPickle: 
-                notFound = False
-                reposPickle[link]+=1
-                pickleOut = open(f"api_scraper/seenRepos/{counter}.pickle", "wb")
-                pickle.dump(reposPickle, pickleOut)
-                pickleOut.close()
-            counter+=1
+        else: 
+            counter = 0
+            while notFound and counter < reposFiles:
+                pickleIn = open(f"api_scraper/seenRepos/{counter}.pickle", "rb")
+                reposPickle = pickle.load(pickleIn)
+                pickleIn.close()
+                if link in reposPickle: 
+                    notFound = False
+                    reposPickle[link]+=1
+                    pickleOut = open(f"api_scraper/seenRepos/{counter}.pickle", "wb")
+                    pickle.dump(reposPickle, pickleOut)
+                    pickleOut.close()
+                counter+=1
         
         if notFound: 
             inQueue.append(["repo", link])
         
-        if len(repo_urls) > 1000:
-            pickleOut = open(f"api_scraper/seenRepos/{counter}.pickle", "wb")
-            pickle.dump(reposPickle, pickleOut)
+        if len(repo_urls) >= 1000:
+            pickleOut = open(f"api_scraper/seenRepos/{reposFiles}.pickle", "wb")
+            pickle.dump(repo_urls, pickleOut)
             pickleOut.close()
             with open(f"api_scraper/seenRepos/{reposFiles}.csv", "w", newline='') as file: 
                 writer = csv.writer(file, delimiter='|')
@@ -295,7 +303,7 @@ def addQueue(type: str, link:str):
         if notFound: 
             inQueue.append(["user", link])
         
-        if len(user_urls) > 1000:
+        if len(user_urls) >= 1000:
             pickleOut = open(f"api_scraper/seenUsers/{usersFiles}.pickle", "wb")
             pickle.dump(user_urls, pickleOut)
             pickleOut.close()
@@ -308,7 +316,7 @@ def addQueue(type: str, link:str):
     else: raise ValueError("'type' must be 'repo' or 'user'")
 
 
-    if len(inQueue) > 1000:
+    if len(inQueue) >= 1000:
         with open(f"api_scraper/queue/{queueFiles}.csv", "w", newline='') as file: 
             writer = csv.writer(file, delimiter='|')
             writer.writerows(inQueue)
@@ -323,6 +331,10 @@ def saveData():
         * seenUsers
         * seenRepos
     '''
+    pickleOut = open(f"api_scraper/savedRun.pickle", "wb")
+    pickle.dump([inQueue,bigrams,user_urls,repo_urls,usersFiles, reposFiles, queueFiles, currentQueue], pickleOut)
+    pickleOut.close()
+
     pickleQueue = open(f"api_scraper/queue.pickle", "wb")
     pickle.dump(inQueue, pickleQueue)
     pickleQueue.close()
@@ -354,7 +366,6 @@ def run(iterations):
                 reader = csv.reader(csvfile, delimiter='|')
                 for row in reader:
                     inQueue.append(row)
-            print(f"inQueue = {inQueue}")
             currentQueue += 1
         data = inQueue.pop()
         if data[0] == "user":
@@ -373,7 +384,7 @@ def run(iterations):
         writer = csv.writer(file, delimiter='|')
         writer.writerows(inQueue)
 
-run(100)
+run(10)
 
 with open("api_scraper/repos.csv", newline='') as csvfile:
     reader = csv.reader(csvfile, delimiter='|')
